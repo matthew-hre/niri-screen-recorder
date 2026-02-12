@@ -1,4 +1,5 @@
 use futures_util::StreamExt;
+use std::path::{Path, PathBuf};
 use zbus::{Connection, proxy};
 
 /// DBus proxy for freedesktop notifications
@@ -38,17 +39,93 @@ fn handle_action(action_key: &str, file_path: &str) {
             }
             Err(e) => tracing::error!("Failed to create clipboard: {}", e),
         },
-        "open-file" => {
-            match std::process::Command::new("xdg-open")
-                .arg(file_path)
-                .spawn()
-            {
-                Ok(_) => tracing::info!("Opened file: {}", file_path),
-                Err(e) => tracing::error!("Failed to open file: {}", e),
-            }
-        }
+        "open-file" => match open_file(file_path) {
+            Ok(()) => tracing::info!("Opened file: {}", file_path),
+            Err(e) => tracing::error!("Failed to open file: {}", e),
+        },
         _ => tracing::warn!("Unknown action: {}", action_key),
     }
+}
+
+struct OpenCommand {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+impl OpenCommand {
+    fn new(program: impl Into<PathBuf>, args: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+        }
+    }
+}
+
+fn open_file(file_path: &str) -> Result<(), String> {
+    if !Path::new(file_path).exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+
+    let mut candidates: Vec<OpenCommand> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Ok(custom) = std::env::var("NIRI_SCREEN_RECORDER_OPEN_CMD") {
+        if !custom.trim().is_empty() {
+            candidates.push(OpenCommand::new(custom.trim(), vec![file_path.to_string()]));
+        }
+    }
+
+    for program in ["xdg-open", "gio"] {
+        if seen.insert(program.to_string()) {
+            let args = if program == "gio" {
+                vec!["open".to_string(), file_path.to_string()]
+            } else {
+                vec![file_path.to_string()]
+            };
+            candidates.push(OpenCommand::new(program, args));
+        }
+    }
+
+    for program in [
+        "/run/current-system/sw/bin/xdg-open",
+        "/usr/bin/xdg-open",
+        "/bin/xdg-open",
+        "/run/current-system/sw/bin/gio",
+        "/usr/bin/gio",
+        "/bin/gio",
+    ] {
+        let path = Path::new(program);
+        if path.exists() {
+            let program_str = program.to_string();
+            if seen.insert(program_str) {
+                let args = if path.file_name() == Some(std::ffi::OsStr::new("gio")) {
+                    vec!["open".to_string(), file_path.to_string()]
+                } else {
+                    vec![file_path.to_string()]
+                };
+                candidates.push(OpenCommand::new(path, args));
+            }
+        }
+    }
+
+    for candidate in candidates {
+        match std::process::Command::new(&candidate.program)
+            .args(&candidate.args)
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(format!(
+                    "Failed to run {}: {}",
+                    candidate.program.to_string_lossy(),
+                    e
+                ));
+            }
+        }
+    }
+
+    Err("Could not find a file opener (tried xdg-open and gio)".to_string())
 }
 
 /// Show a notification that recording stopped with action buttons
@@ -64,12 +141,7 @@ pub async fn notify_recording_stopped(
         .await
         .map_err(|e| format!("Failed to create notification proxy: {}", e))?;
 
-    let actions: Vec<&str> = vec![
-        "copy-path",
-        "Copy Path",
-        "open-file",
-        "Open File",
-    ];
+    let actions: Vec<&str> = vec!["copy-path", "Copy Path", "open-file", "Open File"];
 
     let notification_id = proxy
         .notify(
