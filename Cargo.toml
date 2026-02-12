@@ -4,3 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+zbus = "5"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+arboard = { version = "3", features = ["wayland-data-control"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+dirs = "6"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+nix = { version = "0.30", features = ["signal", "process"] }
+futures-util = "0.3"
