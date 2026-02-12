@@ -57,7 +57,7 @@
         outputDir = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
-          description = "Directory to save recordings. Defaults to ~/Videos/Screencasts.";
+          description = "Directory to save recordings. Defaults to ~/Videos/Screencasts (or platform XDG video directory + Screencasts).";
         };
 
         fps = lib.mkOption {
